@@ -65,6 +65,10 @@ jobs:
       - name: Sync web bundle
         run: npx cap sync android
 
+      - name: Verify Google Play target SDK
+        run: |
+          grep -Eq 'targetSdkVersion\s*=\s*36|targetSdk\s+36|targetSdk\s*=\s*36' android/variables.gradle android/app/build.gradle
+
       - name: Configure Android release metadata
         run: node scripts/configure-android-release.mjs
 
@@ -101,6 +105,8 @@ jobs:
   build-signed-release:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       VERSION_NAME: ${{ inputs.version_name }}
       VERSION_CODE: ${{ inputs.version_code }}
@@ -137,6 +143,10 @@ jobs:
 
       - name: Sync web bundle
         run: npx cap sync android
+
+      - name: Verify Google Play target SDK
+        run: |
+          grep -Eq 'targetSdkVersion\s*=\s*36|targetSdk\s+36|targetSdk\s*=\s*36' android/variables.gradle android/app/build.gradle
 
       - name: Configure Android release metadata
         run: node scripts/configure-android-release.mjs
@@ -194,3 +204,18 @@ jobs:
           path: release-output/*
           if-no-files-found: error
           retention-days: 90
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::GitHub Release $TAG already exists. Increase version_name before publishing again."
+            exit 1
+          fi
+          gh release create "$TAG" release-output/* \
+            --target "$GITHUB_SHA" \
+            --title "Today Workspace ${TAG}" \
+            --generate-notes
