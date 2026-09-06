@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="1688" viewBox="0 0 780 1688">
+  <rect width="780" height="1688" fill="#171815"/>
+  <g font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <g opacity="0.32"><text x="32" y="72" font-size="24" fill="#a6aaa1">9月6日星期日</text><text x="32" y="142" font-size="52" font-weight="700" fill="#eceee8">今天</text><rect x="32" y="214" width="716" height="96" rx="24" fill="#1e201d" stroke="#30332e" stroke-width="2"/><rect x="32" y="420" width="716" height="120" rx="24" fill="#1e201d" stroke="#30332e" stroke-width="2"/></g>
+    <rect x="0" y="500" width="780" height="1188" rx="38" fill="#1e201d" stroke="#30332e" stroke-width="2"/>
+    <rect x="356" y="518" width="68" height="8" rx="4" fill="#30332e"/>
+    <text x="36" y="606" font-size="34" font-weight="700" fill="#eceee8">设置</text>
+    <text x="730" y="610" font-size="42" text-anchor="middle" fill="#a6aaa1">×</text>
+    <line x1="36" y1="622" x2="744" y2="622" stroke="#30332e" stroke-width="2"/>
+
+    <text x="40" y="682" font-size="28" font-weight="700" fill="#eceee8">深色模式</text>
+    <text x="40" y="724" font-size="21" fill="#a6aaa1">手动覆盖设备主题</text>
+    <rect x="646" y="648" width="78" height="44" rx="22" fill="#87b59c"/>
+    <circle cx="699" cy="670" r="17" fill="#171815"/>
+    <line x1="36" y1="748" x2="744" y2="748" stroke="#30332e" stroke-width="2"/>
+
+    <text x="40" y="808" font-size="28" font-weight="700" fill="#eceee8">本地优先</text>
+    <text x="40" y="850" font-size="21" fill="#a6aaa1">记录和任务优先存放在当前设备 IndexedDB</text>
+    <line x1="36" y1="882" x2="744" y2="882" stroke="#30332e" stroke-width="2"/>
+
+    <text x="40" y="944" font-size="28" font-weight="700" fill="#eceee8">账号与同步</text>
+    <text x="40" y="986" font-size="21" fill="#a6aaa1">登录后使用 Supabase 跨设备同步；离线时继续本地工作</text>
+    <rect x="40" y="1028" width="142" height="54" rx="16" fill="#eceee8"/>
+    <text x="111" y="1063" font-size="22" text-anchor="middle" fill="#171815">立即同步</text>
+    <rect x="198" y="1028" width="128" height="54" rx="16" fill="#1e201d" stroke="#30332e" stroke-width="2"/>
+    <text x="262" y="1063" font-size="22" text-anchor="middle" fill="#eceee8">退出登录</text>
+    <text x="40" y="1132" font-size="21" fill="#a6aaa1">已同步 · 上次 10:22</text>
+    <line x1="36" y1="1162" x2="744" y2="1162" stroke="#30332e" stroke-width="2"/>
+
+    <text x="40" y="1226" font-size="28" font-weight="700" fill="#eceee8">数据备份</text>
+    <text x="40" y="1268" font-size="21" fill="#a6aaa1">导出 / 导入 JSON，按更新时间安全合并</text>
+    <rect x="40" y="1310" width="152" height="54" rx="16" fill="#1e201d" stroke="#30332e" stroke-width="2"/>
+    <text x="116" y="1345" font-size="22" text-anchor="middle" fill="#eceee8">导出 JSON</text>
+    <rect x="208" y="1310" width="152" height="54" rx="16" fill="#1e201d" stroke="#30332e" stroke-width="2"/>
+    <text x="284" y="1345" font-size="22" text-anchor="middle" fill="#eceee8">导入 JSON</text>
+  </g>
+</svg>

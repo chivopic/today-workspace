@@ -1,42 +1,117 @@
 # Today Workspace
 
-一个克制、本地优先、手机端优先的个人工作台。当前同时面向 Web/PWA 与 Android 原生壳：同一套前端通过 Vite 构建，Web 部署到 Vercel，Android 使用 Capacitor 打包。
+> Capture now. Organize later.
 
-线上地址：<https://today-workspace.vercel.app>
+一个克制、local-first、mobile-first 的个人工作台，用尽可能低的摩擦记录想法和任务。Today Workspace 同一套前端同时运行于 Web / PWA 与 Android：本地数据优先写入 IndexedDB，登录后通过 Supabase 跨设备同步。
 
-> 项目于 2026-09-06 从 `chivopic/my-software` 中独立出来长期维护。迁移前的历史仍可在原仓库 Git 历史中查看。
+[![Android CI](https://github.com/chivopic/today-workspace/actions/workflows/today-workspace-android.yml/badge.svg)](https://github.com/chivopic/today-workspace/actions/workflows/today-workspace-android.yml)
+[![Web](https://img.shields.io/badge/Web-PWA-20211f)](https://today-workspace.vercel.app)
+[![Android](https://img.shields.io/badge/Android-Capacitor-20211f)](./RELEASE.md)
+[![Local first](https://img.shields.io/badge/data-local--first-2f5d49)](#local-first)
 
-## 当前功能
+**在线体验：** https://today-workspace.vercel.app
 
-- `今天 / 记录 / 任务` 三入口底部导航
-- 快速记录：普通文本保存为记录，`/task ...` 保存为任务
-- 记录搜索、编辑和删除
-- 任务创建、完成、删除和筛选
-- IndexedDB 本地持久化
-- Notes / Tasks 同步就绪数据模型：`userId / deviceId / version / deletedAt / syncStatus`
-- 本地 `outbox` 变更队列
-- 删除采用 tombstone 软删除，保留跨设备删除语义
-- JSON 数据导出 / 导入；备份 v2 保留同步元数据，并兼容旧 v1 备份
-- Supabase 账号、云同步与密码恢复
-- Vite PWA 构建与 Workbox 离线缓存
-- 深色模式
-- 192×192 / 512×512 PNG 安装图标
-- Lucide 通用图标子集内置，不依赖第三方运行时 CDN
-- Capacitor Android 配置，应用 ID 为 `io.chivopic.today`
-- GitHub Actions 自动构建 Android debug APK，并支持签名 Release APK/AAB
+项目最初在 `chivopic/my-software` 中孵化，并于 2026-09-06 独立为长期维护仓库。迁移前的提交历史仍保留在原仓库中。
+
+## 界面预览
+
+<p align="center">
+  <img src="./docs/screenshots/today-light.svg" width="360" alt="Today Workspace 首页浅色模式" />
+  &nbsp;&nbsp;
+  <img src="./docs/screenshots/settings-dark.svg" width="360" alt="Today Workspace 设置页深色模式" />
+</p>
+
+<p align="center"><sub>示例内容仅用于展示；预览按当前项目的布局与视觉样式绘制。</sub></p>
+
+## 为什么做它
+
+很多笔记和任务工具要求先决定“这是什么、放到哪里、怎么分类”，而 Today Workspace 的思路更简单：**先记下来，再整理。**
+
+- 普通文本直接成为记录
+- 输入 `/task ...` 直接成为任务
+- 没网也能继续使用
+- 登录后再负责同步，而不是让网络状态阻塞输入
+- Web / PWA / Android 共用一套产品逻辑
+
+## 核心能力
+
+| 能力 | 当前实现 |
+| --- | --- |
+| 快速记录 | 首页直接捕获想法；`/task` 快速创建任务 |
+| 记录 | 搜索、编辑、删除 |
+| 任务 | 创建、完成、删除、状态筛选 |
+| Local-first | IndexedDB 本地持久化，写入不等待网络 |
+| 云同步 | Supabase Auth + Notes / Tasks 双向同步 |
+| 离线队列 | 本地 `outbox` 保存待同步修改 |
+| 删除同步 | tombstone 软删除，保留跨设备删除语义 |
+| 数据备份 | JSON v2 导出 / 导入，并兼容旧 v1 备份 |
+| PWA | Vite PWA + Workbox 离线缓存与安装图标 |
+| Android | Capacitor 8，应用 ID `io.chivopic.today` |
+| Release | GitHub Actions 构建 debug APK 与签名 APK / AAB |
+| 外观 | 浅色 / 深色模式，移动端优先布局 |
+
+## 技术栈
+
+- **Frontend:** Vanilla JavaScript + HTML + CSS
+- **Build:** Vite 8
+- **PWA:** `vite-plugin-pwa` + Workbox
+- **Local data:** IndexedDB
+- **Cloud:** Supabase Auth + Database
+- **Android:** Capacitor 8
+- **CI / Release:** GitHub Actions, JDK 21, Android SDK 36
+- **Hosting:** Vercel
+
+## Local-first
+
+Today Workspace 把“本地可用”当作默认状态，而不是降级模式。
+
+```text
+User action
+    │
+    ▼
+IndexedDB ───────────────► UI immediately updates
+    │
+    ├── notes / tasks
+    │
+    └── outbox
+          │
+          ▼ when online + signed in
+       Supabase
+          │
+          ▼
+      other devices
+```
+
+每次新建、编辑、完成任务或删除时，实体更新与 outbox 入队在同一个 IndexedDB transaction 中完成。删除使用 `deletedAt` tombstone；同步成功后再清理对应 outbox 项。
+
+当前数据库沿用历史 key `test1-workspace`，避免升级后已有设备上的本地数据“消失”。Schema v2 包含：
+
+```text
+notes
+  id / text / createdAt / updatedAt
+  userId / deviceId / version / deletedAt / syncStatus
+
+tasks
+  id / text / done / createdAt / updatedAt
+  userId / deviceId / version / deletedAt / syncStatus
+
+outbox
+  id / store / entityId / operation / record / deviceId / queuedAt
+```
 
 ## 工程结构
 
 ```text
-index.html        页面结构
-main.js           Vite 入口
-app.js            业务逻辑、IndexedDB 数据层和本地同步队列
-cloud.js          Supabase 账号与云同步
-icons.js          本地图标运行时
-styles.css        样式
-public/           PWA / Android 共用静态图标
-scripts/          Android release 辅助脚本
-vite.config.js    Web/PWA 构建配置
+index.html          页面结构
+main.js             Vite 入口
+app.js              业务逻辑、IndexedDB 数据层、本地同步队列
+cloud.js            Supabase Auth 与云同步
+icons.js            本地图标运行时
+styles.css          主界面样式
+cloud.css           账号与同步样式
+public/             PWA / Android 共用静态图标
+scripts/            Android release 辅助脚本
+vite.config.js      Web / PWA 构建配置
 capacitor.config.json
 ```
 
@@ -56,11 +131,11 @@ npm run build
 npm run preview
 ```
 
-构建产物位于 `dist/`，Vercel 和 Capacitor 都使用这份 Web bundle。
+构建产物位于 `dist/`，Vercel 与 Capacitor 都使用这份 Web bundle。
 
 ## Android
 
-首次在本地创建 Android 工程：
+首次创建 Android 工程：
 
 ```bash
 npm install
@@ -68,7 +143,7 @@ npm run build
 npm run android:add
 ```
 
-后续同步 Web 代码：
+后续同步 Web bundle：
 
 ```bash
 npm run android:sync
@@ -80,37 +155,28 @@ npm run android:sync
 npm run android:open
 ```
 
-GitHub Actions 会在相关 PR 和 `main` 更新时构建 Android debug APK；Release workflow 可手动构建签名 APK/AAB。CI 使用 Node 22、JDK 21 和 Android SDK 36。
+GitHub Actions 会在 `main` 更新与相关 PR 中构建 debug APK。正式发布流程可手动构建签名 APK / AAB，并执行签名验证和 SHA-256 校验。详细说明见 [`RELEASE.md`](./RELEASE.md)。
 
 ## 部署
 
-该仓库现在就是独立项目根目录。Vercel 项目不再需要设置 `today-workspace` Root Directory，直接从仓库根目录执行 Vite 构建即可。
-
-## 数据策略
-
-Today Workspace 保持 local-first：记录和任务首先写入当前设备的 IndexedDB，不等待网络。数据库继续沿用旧 key `test1-workspace`，避免升级后看不到已有本地数据。
-
-IndexedDB schema 当前为 v2，包含三个 object store：
+项目已经是独立仓库，Vercel 应直接以仓库根目录作为 Root Directory：
 
 ```text
-notes
-  id / text / createdAt / updatedAt
-  userId / deviceId / version / deletedAt / syncStatus
-
-tasks
-  id / text / done / createdAt / updatedAt
-  userId / deviceId / version / deletedAt / syncStatus
-
-outbox
-  id / store / entityId / operation / record / deviceId / queuedAt
+Repository: chivopic/today-workspace
+Branch:     main
+Root:       ./
 ```
 
-每次新建、编辑、完成任务或删除时，实体更新和 outbox 入队在同一个 IndexedDB transaction 中完成。删除写入 `deletedAt` tombstone。云同步使用 Supabase，在登录后将本地 outbox 推送到云端并拉取远端 Notes / Tasks；未登录或离线时仍可完全本地使用。
+## Roadmap
 
-## 下一阶段
+- [ ] 增量 pull / cursor
+- [ ] 更明确的多设备冲突策略
+- [ ] 同步失败重试与状态可视化
+- [ ] 任务日期与提醒
+- [ ] 系统分享入口等原生能力
+- [ ] 更完整的自动化测试
+- [ ] 正式 Android 版本发布与 changelog
 
-1. 完善增量 pull / cursor 与冲突策略
-2. 强化同步状态、失败重试与多设备测试
-3. 增加任务日期、通知、系统分享入口等原生能力
-4. 完善正式 Android Release 流程与版本发布
-5. 逐步补充自动化测试和公开项目文档
+---
+
+Today Workspace is intentionally small: fast to open, easy to understand, and dependable when the network is not.
