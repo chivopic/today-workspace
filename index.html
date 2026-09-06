@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f7f7f5" />
+  <meta name="description" content="一个克制、本地优先的移动端记录与任务工作台" />
+  <link rel="icon" href="/icon.svg" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <title>Today</title>
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div>
+        <p class="eyebrow" id="dateLabel">Today</p>
+        <h1 id="pageTitle">今天</h1>
+      </div>
+      <button class="icon" id="settingsButton" aria-label="设置" title="设置">
+        <i data-lucide="settings-2"></i>
+      </button>
+    </header>
+
+    <main class="content">
+      <section class="view active" data-view="today">
+        <form class="capture" id="captureForm">
+          <label class="sr-only" for="captureInput">快速记录</label>
+          <input id="captureInput" maxlength="180" autocomplete="off" placeholder="记录想法，或输入 /task 添加任务" />
+          <button class="icon submit" type="submit" aria-label="添加" title="添加"><i data-lucide="arrow-up"></i></button>
+        </form>
+        <p class="hint">默认保存为记录；以 <code>/task</code> 开头则保存为任务。</p>
+
+        <section class="section">
+          <div class="section-head"><h2>接下来</h2><button class="quiet" data-nav="tasks">全部任务</button></div>
+          <div id="todayTasks"></div>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>最近记录</h2><button class="quiet" data-nav="notes">全部记录</button></div>
+          <div id="todayNotes"></div>
+        </section>
+      </section>
+
+      <section class="view" data-view="notes">
+        <div class="search"><i data-lucide="search"></i><input id="notesSearch" type="search" placeholder="搜索记录" /></div>
+        <div class="section-head" style="margin-top:18px"><h2>记录</h2><button class="quiet" id="newNoteButton">新建</button></div>
+        <div id="notesList"></div>
+      </section>
+
+      <section class="view" data-view="tasks">
+        <div class="filters">
+          <button class="chip active" data-filter="open">待完成</button>
+          <button class="chip" data-filter="all">全部</button>
+          <button class="chip" data-filter="done">已完成</button>
+        </div>
+        <form class="inline-create" id="taskForm">
+          <input id="taskInput" maxlength="120" placeholder="添加任务" />
+          <button class="icon" type="submit" aria-label="添加任务" title="添加任务"><i data-lucide="plus"></i></button>
+        </form>
+        <div id="tasksList"></div>
+      </section>
+    </main>
+
+    <nav class="bottom" aria-label="主导航">
+      <button class="nav active" data-nav="today"><i data-lucide="sun"></i><span>今天</span></button>
+      <button class="nav" data-nav="notes"><i data-lucide="notebook-text"></i><span>记录</span></button>
+      <button class="nav" data-nav="tasks"><i data-lucide="circle-check-big"></i><span>任务</span></button>
+    </nav>
+  </div>
+
+  <dialog class="sheet" id="editorDialog">
+    <form method="dialog" class="sheet-card" id="editorForm">
+      <div class="handle"></div>
+      <div class="sheet-head"><h2 id="editorTitle">新建记录</h2><button class="icon" value="cancel" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <textarea id="editorText" maxlength="2000" rows="9" placeholder="写点什么…"></textarea>
+      <div class="sheet-actions"><button class="btn" value="cancel">取消</button><button class="btn primary" value="default">保存</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="sheet" id="settingsDialog">
+    <form method="dialog" class="sheet-card">
+      <div class="handle"></div>
+      <div class="sheet-head"><h2>设置</h2><button class="icon" value="cancel" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <div class="settings">
+        <label class="setting">
+          <span><strong>深色模式</strong><small>手动覆盖设备主题</small></span>
+          <input type="checkbox" id="themeToggle" />
+        </label>
+        <div class="setting">
+          <span><strong>本地优先</strong><small>记录和任务存放在当前浏览器 IndexedDB</small></span>
+          <i data-lucide="database"></i>
+        </div>
+        <div class="setting setting-stack">
+          <span><strong>数据备份</strong><small>导出 JSON；导入时按更新时间安全合并，不会先清空现有数据</small></span>
+          <div class="data-actions">
+            <button class="btn compact" type="button" id="exportButton">导出 JSON</button>
+            <button class="btn compact" type="button" id="importButton">导入 JSON</button>
+          </div>
+          <input class="sr-only" type="file" id="importFile" accept=".json,application/json" />
+          <p class="backup-status" id="backupStatus" aria-live="polite"></p>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

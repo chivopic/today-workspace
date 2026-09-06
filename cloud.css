@@ -1,0 +1,28 @@
+.cloud-login {
+  display: grid;
+  gap: 8px;
+}
+
+.cloud-login input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 10px;
+  outline: none;
+  background: var(--bg);
+}
+
+.cloud-login input:focus-visible {
+  border-color: var(--muted);
+}
+
+#cloudAccount .data-actions[hidden],
+#cloudLoginForm[hidden],
+#cloudRecoveryForm[hidden] {
+  display: none;
+}
+
+.cloud-sync-meta {
+  margin-bottom: -4px;
+}
