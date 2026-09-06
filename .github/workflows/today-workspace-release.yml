@@ -186,16 +186,23 @@ jobs:
           ./gradlew clean assembleRelease bundleRelease --no-daemon
 
       - name: Verify release signatures
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk
-          jarsigner -verify android/app/build/outputs/bundle/release/app-release.aab
+          jarsigner -verify -strict \
+            -keystore android/app/release.keystore \
+            -storepass:env KEYSTORE_PASSWORD \
+            android/app/build/outputs/bundle/release/app-release.aab
 
       - name: Stage release artifacts
         run: |
           mkdir -p release-output
           cp android/app/build/outputs/apk/release/app-release.apk "release-output/Today-Workspace-${VERSION_NAME}.apk"
           cp android/app/build/outputs/bundle/release/app-release.aab "release-output/Today-Workspace-${VERSION_NAME}.aab"
-          sha256sum release-output/* > release-output/SHA256SUMS.txt
+          cd release-output
+          sha256sum "Today-Workspace-${VERSION_NAME}.apk" "Today-Workspace-${VERSION_NAME}.aab" > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
 
       - name: Upload signed release artifacts
         uses: actions/upload-artifact@v4

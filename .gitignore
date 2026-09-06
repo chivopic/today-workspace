@@ -6,3 +6,9 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+*.jks
+*.keystore
+android/keystore.properties
+github-secrets.txt
+ANDROID_KEYSTORE_BASE64.txt
+*signing-backup*.zip

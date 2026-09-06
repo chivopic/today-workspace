@@ -15,32 +15,18 @@ It also publishes `SHA256SUMS.txt` for artifact integrity checks.
 
 Android updates must keep using the same release signing key. Never commit the keystore or its passwords to Git.
 
-Generate and securely back up a release keystore locally, then configure these GitHub Actions repository secrets:
+Use the existing, securely backed-up `today-workspace-upload.jks`, then configure these GitHub Actions repository secrets:
 
 - `ANDROID_KEYSTORE_BASE64` — base64-encoded keystore bytes.
 - `ANDROID_KEYSTORE_PASSWORD` — keystore password.
 - `ANDROID_KEY_ALIAS` — key alias.
 - `ANDROID_KEY_PASSWORD` — key password.
 
-Example local keystore creation:
-
-```bash
-keytool -genkeypair \
-  -v \
-  -keystore today-workspace-release.jks \
-  -alias today-workspace \
-  -keyalg RSA \
-  -keysize 4096 \
-  -validity 10000
-```
-
-On macOS/Linux, encode it for the GitHub secret with:
-
-```bash
-base64 < today-workspace-release.jks | tr -d '\n'
-```
+Do not generate a replacement upload/release key. Read the existing Base64 backup and credentials from private local files and pass them to `gh secret set` through stdin; never print them or upload them as build artifacts.
 
 Store the original `.jks` file and its credentials in at least two secure locations. Losing the signing key can prevent future APK updates from installing over previous releases.
+
+After downloading all three release assets into the same directory, run `sha256sum -c SHA256SUMS.txt` in that directory.
 
 ## Building a release
 
