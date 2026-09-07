@@ -73,7 +73,10 @@ button {
 .main { min-width: 0; flex: 1; }
 .title { margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
 .meta { margin-top: 4px; color: var(--muted); font-size: 11.5px; }
-.note { cursor: pointer; }
+.note {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
 .note:hover { background: color-mix(in srgb, var(--soft) 55%, transparent); }
 .check {
   width: 20px; height: 20px; flex: 0 0 auto; margin-top: 1px;
