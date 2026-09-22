@@ -64,8 +64,11 @@ function migrateStore(storeName, transaction) {
   };
 }
 
+let databasePromise;
+
 function db() {
-  return new Promise((resolve, reject) => {
+  if (databasePromise) return databasePromise;
+  databasePromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB, VER);
     request.onupgradeneeded = event => {
       const database = request.result;
@@ -78,9 +81,22 @@ function db() {
         migrateStore("tasks", request.transaction);
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const database = request.result;
+      const reset = () => { databasePromise = null; };
+      database.onversionchange = () => {
+        database.close();
+        reset();
+      };
+      database.onclose = reset;
+      resolve(database);
+    };
+    request.onerror = () => {
+      databasePromise = null;
+      reject(request.error);
+    };
   });
+  return databasePromise;
 }
 
 async function all(name, { includeDeleted = false } = {}) {
@@ -133,20 +149,32 @@ async function createLocal(name, fields) {
 }
 
 async function updateLocal(name, id, patch) {
-  const current = await getOne(name, id);
-  if (!current || current.deletedAt) return null;
-  const now = Date.now();
-  const next = {
-    ...normalizeSyncRecord(current),
-    ...patch,
-    id: current.id,
-    createdAt: current.createdAt,
-    updatedAt: now,
-    deviceId: DEVICE_ID,
-    version: (Number.isInteger(current.version) && current.version > 0 ? current.version : 1) + 1,
-    syncStatus: "pending"
-  };
-  return writeLocal(name, next, next.deletedAt ? "delete" : "upsert");
+  const database = await db();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([name, "outbox"], "readwrite");
+    const store = transaction.objectStore(name);
+    const request = store.get(id);
+    let next = null;
+    request.onsuccess = () => {
+      const current = request.result;
+      if (!current || current.deletedAt) return;
+      next = {
+        ...normalizeSyncRecord(current),
+        ...patch,
+        id: current.id,
+        createdAt: current.createdAt,
+        updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        deviceId: DEVICE_ID,
+        version: (Number.isInteger(current.version) && current.version > 0 ? current.version : 1) + 1,
+        syncStatus: "pending"
+      };
+      store.put(next);
+      transaction.objectStore("outbox").put(outboxEntry(name, next));
+    };
+    transaction.oncomplete = () => resolve(next);
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error("Local update aborted"));
+  });
 }
 
 async function softDelete(name, id) {
@@ -154,7 +182,8 @@ async function softDelete(name, id) {
 }
 
 const icons = () => window.lucide?.createIcons({ attrs: { "stroke-width": 1.8 } });
-const fmt = time => new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(time));
+const dateFormatter = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const fmt = time => dateFormatter.format(new Date(time));
 const empty = text => `<div class="empty">${text}</div>`;
 
 function taskRow(task) {
@@ -189,8 +218,9 @@ function noteRow(note) {
   return element;
 }
 
-async function renderToday() {
+async function renderToday(revision) {
   const [tasks, notes] = await Promise.all([all("tasks"), all("notes")]);
+  if (revision !== renderRevision) return;
   const taskContainer = $("#todayTasks");
   const noteContainer = $("#todayNotes");
   taskContainer.innerHTML = "";
@@ -205,8 +235,9 @@ async function renderToday() {
   else recentNotes.forEach(note => noteContainer.append(noteRow(note)));
 }
 
-async function renderTasks() {
+async function renderTasks(revision) {
   let tasks = await all("tasks");
+  if (revision !== renderRevision) return;
   tasks.sort((a, b) => Number(a.done) - Number(b.done) || b.createdAt - a.createdAt);
   if (filter === "open") tasks = tasks.filter(task => !task.done);
   if (filter === "done") tasks = tasks.filter(task => task.done);
@@ -217,9 +248,10 @@ async function renderTasks() {
   else tasks.forEach(task => container.append(taskRow(task)));
 }
 
-async function renderNotes() {
+async function renderNotes(revision) {
   const query = $("#notesSearch").value.trim().toLowerCase();
   let notes = await all("notes");
+  if (revision !== renderRevision) return;
   notes.sort((a, b) => b.updatedAt - a.updatedAt);
   if (query) notes = notes.filter(note => note.text.toLowerCase().includes(query));
   const container = $("#notesList");
@@ -229,9 +261,13 @@ async function renderNotes() {
   else notes.forEach(note => container.append(noteRow(note)));
 }
 
+let renderRevision = 0;
+let searchTimer;
 async function render() {
-  await Promise.all([renderToday(), renderTasks(), renderNotes()]);
-  icons();
+  clearTimeout(searchTimer);
+  const revision = ++renderRevision;
+  await { today: renderToday, tasks: renderTasks, notes: renderNotes }[view](revision);
+  if (revision === renderRevision) icons();
 }
 
 function nav(nextView) {
@@ -239,7 +275,7 @@ function nav(nextView) {
   $$(".view").forEach(element => element.classList.toggle("active", element.dataset.view === nextView));
   $$(".nav").forEach(element => element.classList.toggle("active", element.dataset.nav === nextView));
   $("#pageTitle").textContent = { today: "今天", notes: "记录", tasks: "任务" }[nextView];
-  icons();
+  render();
 }
 
 function openEditor(note = null) {
@@ -330,7 +366,7 @@ async function exportBackup() {
   }
 }
 
-const validTime = value => Number.isFinite(value) && value > 0;
+const validTime = value => Number.isFinite(value) && value > 0 && value <= 8640000000000000;
 const validId = value => typeof value === "string" && value.length > 0 && value.length <= 200;
 const validNullableId = value => value == null || validId(value);
 const validDeletedAt = value => value == null || validTime(value);
@@ -356,37 +392,28 @@ function normalizeNewest(records) {
 }
 
 async function mergeBackup(importedNotes, importedTasks) {
-  const [currentNotes, currentTasks] = await Promise.all([
-    all("notes", { includeDeleted: true }),
-    all("tasks", { includeDeleted: true })
-  ]);
-  const noteMap = new Map(currentNotes.map(note => [note.id, note]));
-  const taskMap = new Map(currentTasks.map(task => [task.id, task]));
-  const notesToWrite = normalizeNewest(importedNotes).filter(note => isNewer(note, noteMap.get(note.id)));
-  const tasksToWrite = normalizeNewest(importedTasks).filter(task => isNewer(task, taskMap.get(task.id)));
-  if (!notesToWrite.length && !tasksToWrite.length) return { notes: 0, tasks: 0 };
-
   const database = await db();
-  await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const transaction = database.transaction(["notes", "tasks", "outbox"], "readwrite");
-    const noteStore = transaction.objectStore("notes");
-    const taskStore = transaction.objectStore("tasks");
     const outbox = transaction.objectStore("outbox");
-    notesToWrite.forEach(note => {
-      const normalized = normalizeSyncRecord({ ...note, syncStatus: "pending" });
-      noteStore.put(normalized);
-      outbox.put(outboxEntry("notes", normalized));
-    });
-    tasksToWrite.forEach(task => {
-      const normalized = normalizeSyncRecord({ ...task, syncStatus: "pending" });
-      taskStore.put(normalized);
-      outbox.put(outboxEntry("tasks", normalized));
-    });
-    transaction.oncomplete = resolve;
+    const counts = { notes: 0, tasks: 0 };
+    for (const [name, records] of [["notes", importedNotes], ["tasks", importedTasks]]) {
+      const store = transaction.objectStore(name);
+      for (const record of normalizeNewest(records)) {
+        const request = store.get(record.id);
+        request.onsuccess = () => {
+          if (!isNewer(record, request.result)) return;
+          const normalized = normalizeSyncRecord({ ...record, syncStatus: "pending" });
+          store.put(normalized);
+          outbox.put(outboxEntry(name, normalized));
+          counts[name] += 1;
+        };
+      }
+    }
+    transaction.oncomplete = () => resolve(counts);
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error || new Error("Import aborted"));
   });
-  return { notes: notesToWrite.length, tasks: tasksToWrite.length };
 }
 
 async function importBackup(file) {
@@ -418,7 +445,7 @@ $("#captureForm").onsubmit = async event => {
   const raw = input.value.trim();
   if (!raw) return;
   const isTask = /^\/task(\s|$)/i.test(raw);
-  const text = raw.replace(/^\/task\s*/i, "").trim();
+  const text = isTask ? raw.replace(/^\/task\s*/i, "").trim() : raw;
   if (!text) return;
   if (isTask) await createLocal("tasks", { text, done: false });
   else await createLocal("notes", { text });
@@ -440,11 +467,16 @@ $$(".chip").forEach(chip => {
   chip.onclick = () => {
     filter = chip.dataset.filter;
     $$(".chip").forEach(element => element.classList.toggle("active", element === chip));
-    renderTasks().then(icons);
+    render();
   };
 });
 
-$("#notesSearch").oninput = renderNotes;
+$("#notesSearch").oninput = () => {
+  // Invalidate in-flight results immediately, before the debounce expires.
+  ++renderRevision;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => render(), 150);
+};
 $("#newNoteButton").onclick = () => openEditor();
 $("#settingsButton").onclick = () => $("#settingsDialog").showModal();
 
@@ -475,4 +507,3 @@ $("#dateLabel").textContent = new Intl.DateTimeFormat("zh-CN", { weekday: "long"
 theme();
 icons();
 seed().then(render);
-nav(view);

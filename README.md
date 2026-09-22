@@ -127,6 +127,14 @@ npm install
 npm run dev
 ```
 
+本地回归测试（Node.js 内置测试运行器 + jsdom / fake-indexeddb）：
+
+```bash
+npm test
+```
+
+覆盖输入解析、并发写入与删除、备份合并、搜索防抖及可见页面读取次数。
+
 生产构建：
 
 ```bash
