@@ -6,12 +6,12 @@ on:
       version_name:
         description: Android versionName
         required: true
-        default: "0.3.1"
+        default: "0.3.2"
         type: string
       version_code:
         description: Android versionCode (must always increase)
         required: true
-        default: "4"
+        default: "5"
         type: string
   pull_request:
     paths:
@@ -29,8 +29,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
-      VERSION_NAME: "0.3.1"
-      VERSION_CODE: "4"
+      VERSION_NAME: "0.3.2"
+      VERSION_CODE: "5"
 
     steps:
       - name: Checkout
