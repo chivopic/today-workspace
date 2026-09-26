@@ -1,10 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
+import { db, ready } from "./app.js";
 
 const SUPABASE_URL = "https://oydhkcghcfxwvyfclwgy.supabase.co";
 const SUPABASE_KEY = "sb_publishable_zhGDgWLzFX4_2HMLwgWn9w_nHIKmZuI";
 const AUTH_REDIRECT_URL = "https://today-workspace.vercel.app";
-const DB = "test1-workspace";
-const DB_VERSION = 2;
 const BOUND_USER_KEY = "today-workspace-bound-user";
 const LAST_SYNC_KEY = "today-workspace-last-sync-at";
 const SEED_NOTE = "这是一个本地优先的移动工作台。打开即记录，不要求先整理。";
@@ -13,20 +12,13 @@ const SEED_TASK = "试着完成一个任务，再新增一条记录";
 const recoveryParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
 let recoveryMode = recoveryParams.get("type") === "recovery";
 let activeSession = null;
+let sessionRevision = 0;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = selector => document.querySelector(selector);
 
-function openDb() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB, DB_VERSION);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
 async function getAll(storeName) {
-  const database = await openDb();
+  const database = await db();
   return new Promise((resolve, reject) => {
     const request = database.transaction(storeName).objectStore(storeName).getAll();
     request.onsuccess = () => resolve(request.result || []);
@@ -34,32 +26,20 @@ async function getAll(storeName) {
   });
 }
 
-async function getOne(storeName, id) {
-  const database = await openDb();
+async function countPending() {
+  const database = await db();
   return new Promise((resolve, reject) => {
-    const request = database.transaction(storeName).objectStore(storeName).get(id);
-    request.onsuccess = () => resolve(request.result || null);
+    const request = database.transaction("outbox").objectStore("outbox").count();
+    request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 }
 
-async function putOne(storeName, value) {
-  const database = await openDb();
+function transactionDone(transaction) {
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction(storeName, "readwrite");
-    transaction.objectStore(storeName).put(value);
     transaction.oncomplete = resolve;
     transaction.onerror = () => reject(transaction.error);
-  });
-}
-
-async function deleteOne(storeName, id) {
-  const database = await openDb();
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(storeName, "readwrite");
-    transaction.objectStore(storeName).delete(id);
-    transaction.oncomplete = resolve;
-    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error("Sync transaction aborted"));
   });
 }
 
@@ -80,6 +60,10 @@ function toRemote(record) {
     deleted_at: record.deletedAt || null,
     device_id: record.deviceId || "unknown"
   };
+}
+
+function sameRecord(left, right) {
+  return Boolean(left && right) && JSON.stringify(toRemote(left)) === JSON.stringify(toRemote(right));
 }
 
 function fromRemote(row, userId) {
@@ -113,11 +97,14 @@ function formatSyncTime(timestamp) {
   ).format(date);
 }
 
+let metaRevision = 0;
 async function refreshSyncMeta(session = activeSession) {
+  const revision = ++metaRevision;
   const element = $("#cloudSyncMeta");
   if (!element) return;
   try {
-    const pending = (await getAll("outbox")).length;
+    const pending = await countPending();
+    if (revision !== metaRevision) return;
     if (!session?.user) {
       element.textContent = pending ? `本地模式 · 待同步 ${pending} 项` : "本地模式 · 当前无待同步修改";
       return;
@@ -218,7 +205,7 @@ function ensureAccountUi() {
     setStatus("密码已更新，可以继续使用当前账号。");
   });
 
-  $("#cloudSyncButton").addEventListener("click", () => syncNow({ reloadOnChange: true }));
+  $("#cloudSyncButton").addEventListener("click", () => syncNow());
   $("#cloudLogoutButton").addEventListener("click", () => supabase.auth.signOut());
 }
 
@@ -258,15 +245,25 @@ function untouchedSeed(record, text) {
 }
 
 async function discardUntouchedSeedExamples() {
-  const [notes, tasks] = await Promise.all([getAll("notes"), getAll("tasks")]);
-  const seeds = [
-    ...notes.filter(note => untouchedSeed(note, SEED_NOTE)).map(note => ["notes", note.id]),
-    ...tasks.filter(task => untouchedSeed(task, SEED_TASK)).map(task => ["tasks", task.id])
-  ];
-  for (const [storeName, id] of seeds) {
-    await deleteOne(storeName, id);
-    await deleteOne("outbox", `${storeName}:${id}`);
+  const database = await db();
+  const transaction = database.transaction(["notes", "tasks", "outbox"], "readwrite");
+  const completed = transactionDone(transaction);
+  let removed = 0;
+  for (const [storeName, text] of [["notes", SEED_NOTE], ["tasks", SEED_TASK]]) {
+    const request = transaction.objectStore(storeName).openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      if (untouchedSeed(cursor.value, text)) {
+        cursor.delete();
+        transaction.objectStore("outbox").delete(`${storeName}:${cursor.value.id}`);
+        removed++;
+      }
+      cursor.continue();
+    };
   }
+  await completed;
+  if (removed) window.dispatchEvent(new Event("workspace:remote-change"));
 }
 
 async function ensureUserBinding(userId) {
@@ -279,87 +276,168 @@ async function ensureUserBinding(userId) {
   return bound === userId;
 }
 
-async function pushOutbox(userId) {
+async function acknowledgeEntry(entry, userId) {
+  const database = await db();
+  const transaction = database.transaction([entry.store, "outbox"], "readwrite");
+  const completed = transactionDone(transaction);
+  const outbox = transaction.objectStore("outbox");
+  const queued = outbox.get(entry.id);
+  queued.onsuccess = () => {
+    // The upload acknowledged this snapshot only. A newer local edit must stay queued.
+    if (!sameRecord(queued.result?.record, entry.record)) return;
+    outbox.delete(entry.id);
+    const store = transaction.objectStore(entry.store);
+    const current = store.get(entry.entityId);
+    current.onsuccess = () => {
+      if (sameRecord(current.result, entry.record)) {
+        store.put({ ...current.result, userId, syncStatus: "synced" });
+      }
+    };
+  };
+  await completed;
+}
+
+async function pushOutbox(userId, assertCurrent = () => {}) {
   const entries = await getAll("outbox");
   let pushed = 0;
   for (const entry of entries) {
-    const record = entry.record;
+    assertCurrent();
     const fn = entry.store === "notes" ? "sync_upsert_note" : "sync_upsert_task";
-    const { error } = await supabase.rpc(fn, { payload: toRemote(record) });
+    const { error } = await supabase.rpc(fn, { payload: toRemote(entry.record) });
     if (error) throw error;
-    await deleteOne("outbox", entry.id);
-    const current = await getOne(entry.store, entry.entityId);
-    if (current && current.updatedAt === record.updatedAt && (current.version || 1) === (record.version || 1)) {
-      await putOne(entry.store, { ...current, userId, syncStatus: "synced" });
-    }
-    pushed += 1;
+    assertCurrent();
+    await acknowledgeEntry(entry, userId);
+    pushed++;
   }
   return pushed;
 }
 
-async function pullStore(storeName, userId) {
-  const { data, error } = await supabase.from(storeName).select("*");
-  if (error) throw error;
+async function mergeRemotePage(storeName, rows, userId) {
+  const database = await db();
+  const transaction = database.transaction([storeName, "outbox"], "readwrite");
+  const completed = transactionDone(transaction);
+  const store = transaction.objectStore(storeName);
+  const outbox = transaction.objectStore("outbox");
   let changed = 0;
-  for (const row of data || []) {
+  for (const row of rows) {
     const incoming = fromRemote(row, userId);
-    const current = await getOne(storeName, incoming.id);
-    if (isNewer(incoming, current)) {
-      await putOne(storeName, incoming);
-      changed += 1;
-    } else if (current && current.updatedAt === incoming.updatedAt && (current.version || 1) === incoming.version && current.syncStatus !== "synced") {
-      await putOne(storeName, { ...current, userId, syncStatus: "synced" });
-    }
+    const currentRequest = store.get(incoming.id);
+    const pendingRequest = outbox.get(`${storeName}:${incoming.id}`);
+    pendingRequest.onsuccess = () => {
+      // Unsent changes may have arrived while the network request was in flight.
+      if (pendingRequest.result) return;
+      const current = currentRequest.result;
+      if (isNewer(incoming, current)) {
+        store.put(incoming);
+        changed++;
+      } else if (sameRecord(current, incoming) && current.syncStatus !== "synced") {
+        store.put({ ...current, userId, syncStatus: "synced" });
+      }
+    };
+  }
+  await completed;
+  if (changed) window.dispatchEvent(new Event("workspace:remote-change"));
+  return changed;
+}
+
+async function pullStore(storeName, userId, assertCurrent = () => {}) {
+  let changed = 0;
+  let lastId = null;
+  // Keyset pagination also handles projects whose API row cap is below our page size.
+  while (true) {
+    assertCurrent();
+    let query = supabase.from(storeName).select("*").order("id").limit(500);
+    if (lastId !== null) query = query.gt("id", lastId);
+    const { data, error } = await query;
+    if (error) throw error;
+    assertCurrent();
+    if (!data?.length) break;
+    changed += await mergeRemotePage(storeName, data, userId);
+    lastId = data[data.length - 1].id;
   }
   return changed;
 }
 
-let syncing = false;
-async function syncNow({ reloadOnChange = false } = {}) {
-  if (syncing) return;
-  if (!navigator.onLine) {
-    setStatus("当前离线，本地修改会保留，联网后自动同步。");
-    await refreshSyncMeta();
-    return;
-  }
-  const { data: { session } } = await supabase.auth.getSession();
-  activeSession = session;
-  if (!session?.user) {
-    await refreshSyncMeta(session);
-    return;
-  }
-  if (!await ensureUserBinding(session.user.id)) {
-    setStatus("此设备的本地数据已绑定另一个账号，已暂停同步以避免数据混用。");
-    return;
-  }
+let syncPromise = null;
+let syncTimer;
+let syncRequested = false;
 
-  syncing = true;
-  setStatus("正在同步…");
-  await refreshSyncMeta(session);
+function scheduleSync() {
+  clearTimeout(syncTimer);
+  if (syncPromise) {
+    syncRequested = true;
+    return;
+  }
+  syncTimer = setTimeout(() => syncNow(), 300);
+}
+
+function syncNow() {
+  if (syncPromise) return syncPromise;
+  clearTimeout(syncTimer);
+  // Reserve the flight before session lookup and account binding can yield.
+  syncPromise = performSync().finally(() => {
+    syncPromise = null;
+    if (syncRequested) {
+      syncRequested = false;
+      scheduleSync();
+    }
+  });
+  return syncPromise;
+}
+
+async function performSync() {
   try {
-    const pushed = await pushOutbox(session.user.id);
-    const [notesChanged, tasksChanged] = await Promise.all([
-      pullStore("notes", session.user.id),
-      pullStore("tasks", session.user.id)
+    await ready;
+    if (!navigator.onLine) {
+      setStatus("当前离线，本地修改会保留，联网后自动同步。");
+      return;
+    }
+    const authRevision = sessionRevision;
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    if (authRevision !== sessionRevision) return;
+    const session = data.session;
+    activeSession = session;
+    if (!session?.user) return;
+    if (!await ensureUserBinding(session.user.id)) {
+      setStatus("此设备的本地数据已绑定另一个账号，已暂停同步以避免数据混用。");
+      return;
+    }
+    const userId = session.user.id;
+    const assertCurrent = () => {
+      if (authRevision !== sessionRevision || activeSession?.user?.id !== userId) {
+        throw Object.assign(new Error("Account changed during sync"), { code: "ACCOUNT_CHANGED" });
+      }
+    };
+    assertCurrent();
+    setStatus("正在同步…");
+    await refreshSyncMeta(session);
+    const pushed = await pushOutbox(userId, assertCurrent);
+    // Wait for both pulls to settle before releasing the flight if one fails.
+    const results = await Promise.allSettled([
+      pullStore("notes", userId, assertCurrent),
+      pullStore("tasks", userId, assertCurrent)
     ]);
-    const changed = notesChanged + tasksChanged;
-    const syncedAt = Date.now();
-    localStorage.setItem(LAST_SYNC_KEY, String(syncedAt));
+    const failure = results.find(result => result.status === "rejected");
+    if (failure) throw failure.reason;
+    assertCurrent();
+    const changed = results.reduce((sum, result) => sum + result.value, 0);
+    try { localStorage.setItem(LAST_SYNC_KEY, String(Date.now())); } catch { /* The sync itself succeeded. */ }
     setStatus(`同步完成${pushed ? ` · 上传 ${pushed}` : ""}${changed ? ` · 更新 ${changed}` : ""}`);
-    await refreshSyncMeta(session);
-    if (reloadOnChange && changed) window.location.reload();
   } catch (error) {
-    console.error("Cloud sync failed", error);
-    setStatus("同步失败，本地数据不受影响；稍后可重试。");
-    await refreshSyncMeta(session);
+    if (error.code !== "ACCOUNT_CHANGED") {
+      console.error("Cloud sync failed", error);
+      setStatus("同步失败，本地数据不受影响；稍后可重试。");
+    }
   } finally {
-    syncing = false;
+    await refreshSyncMeta(activeSession);
   }
 }
 
 ensureAccountUi();
 
 supabase.auth.onAuthStateChange((event, nextSession) => {
+  if (activeSession?.user?.id !== nextSession?.user?.id) sessionRevision++;
   activeSession = nextSession;
   renderSession(nextSession);
   if (event === "PASSWORD_RECOVERY") {
@@ -367,19 +445,31 @@ supabase.auth.onAuthStateChange((event, nextSession) => {
     setStatus("请设置一个新密码完成账号恢复。");
     return;
   }
-  if (event === "SIGNED_IN" && nextSession?.user && !recoveryMode) syncNow({ reloadOnChange: true });
+  if (event === "SIGNED_IN" && nextSession?.user && !recoveryMode) scheduleSync();
 });
 
-const { data: { session } } = await supabase.auth.getSession();
-renderSession(session);
-if (recoveryMode) renderRecoveryMode(true);
-else if (session?.user) syncNow({ reloadOnChange: true });
+try {
+  await ready;
+  const authRevision = sessionRevision;
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  if (authRevision === sessionRevision) renderSession(session);
+  if (recoveryMode) renderRecoveryMode(true);
+  else if (activeSession?.user) syncNow();
+} catch (error) {
+  console.error("Unable to initialize cloud session", error);
+  renderSession(null);
+  setStatus("暂时无法连接账号服务，仍可继续本地使用。");
+}
 
-window.addEventListener("online", () => syncNow({ reloadOnChange: true }));
+window.addEventListener("online", () => syncNow());
+window.addEventListener("workspace:local-change", () => {
+  refreshSyncMeta();
+  if (!recoveryMode) scheduleSync();
+});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     refreshSyncMeta();
-    syncNow({ reloadOnChange: true });
+    syncNow();
   }
 });
-setInterval(() => refreshSyncMeta(), 5000);

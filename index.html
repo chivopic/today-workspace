@@ -28,6 +28,7 @@
           <input id="captureInput" maxlength="180" autocomplete="off" placeholder="记录想法，或输入 /task 添加任务" />
           <button class="icon submit" type="submit" aria-label="添加" title="添加"><i data-lucide="arrow-up"></i></button>
         </form>
+        <p class="save-status" id="captureStatus" role="status"></p>
         <p class="hint">默认保存为记录；以 <code>/task</code> 开头则保存为任务。</p>
 
         <section class="section">
@@ -57,6 +58,7 @@
           <input id="taskInput" maxlength="120" placeholder="添加任务" />
           <button class="icon" type="submit" aria-label="添加任务" title="添加任务"><i data-lucide="plus"></i></button>
         </form>
+        <p class="save-status" id="taskStatus" role="status"></p>
         <div id="tasksList"></div>
       </section>
     </main>
@@ -73,6 +75,7 @@
       <div class="handle"></div>
       <div class="sheet-head"><h2 id="editorTitle">新建记录</h2><button class="icon" value="cancel" aria-label="关闭"><i data-lucide="x"></i></button></div>
       <textarea id="editorText" maxlength="2000" rows="9" placeholder="写点什么…"></textarea>
+      <p class="save-status" id="editorStatus" role="status"></p>
       <div class="sheet-actions"><button class="btn" value="cancel">取消</button><button class="btn primary" value="default">保存</button></div>
     </form>
   </dialog>
