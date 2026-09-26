@@ -59,6 +59,9 @@ button {
 }
 .capture .submit { background: var(--text); color: var(--bg); }
 .hint { margin: 7px 2px 0; color: var(--muted); font-size: 12px; }
+.save-status { margin: 7px 2px; color: var(--muted); font-size: 12px; }
+.save-status:empty { display: none; }
+button:disabled { cursor: wait; opacity: .6; }
 .section { margin-top: clamp(22px, 6vw, 34px); }
 .section-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: 12px;

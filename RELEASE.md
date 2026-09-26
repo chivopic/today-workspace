@@ -1,6 +1,6 @@
 # Today Workspace Android Release
 
-Current application version: `0.3.1` (Android versionCode `4`).
+Current application version: `0.3.2` (Android versionCode `5`).
 
 ## Release outputs
 
@@ -32,8 +32,8 @@ After downloading all three release assets into the same directory, run `sha256s
 
 Run the GitHub Actions workflow `Today Workspace Release` manually and provide:
 
-- `version_name`: semantic app version, for example `0.3.1`.
-- `version_code`: positive integer that must increase for every Play Store release, `4` for this release.
+- `version_name`: semantic app version, for example `0.3.2`.
+- `version_code`: positive integer that must increase for every Play Store release, `5` for this release.
 
 The workflow fails if signing secrets are absent. It never falls back to the Android debug key.
 

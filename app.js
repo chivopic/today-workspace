@@ -1,5 +1,5 @@
 const DB = "test1-workspace"; // Legacy key intentionally kept so existing installs retain data.
-const VER = 2;
+const VER = 3;
 const BACKUP_FORMAT = "today-workspace-backup";
 const BACKUP_VERSION = 2;
 const LEGACY_BACKUP_VERSION = 1;
@@ -8,6 +8,7 @@ const DEVICE_ID_KEY = "today-workspace-device-id";
 let view = "today";
 let filter = "open";
 let editing = null;
+let editorRevision = 0;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -76,6 +77,11 @@ function db() {
       if (!database.objectStoreNames.contains("tasks")) database.createObjectStore("tasks", { keyPath: "id" });
       if (!database.objectStoreNames.contains("outbox")) database.createObjectStore("outbox", { keyPath: "id" });
 
+      for (const [name, key] of [["notes", "updatedAt"], ["tasks", "createdAt"]]) {
+        const store = request.transaction.objectStore(name);
+        if (!store.indexNames.contains(key)) store.createIndex(key, key);
+      }
+
       if (event.oldVersion < 2 && event.oldVersion > 0) {
         migrateStore("notes", request.transaction);
         migrateStore("tasks", request.transaction);
@@ -120,6 +126,28 @@ async function getOne(name, id) {
   });
 }
 
+async function recent(name, key, limit, matches = () => true) {
+  const database = await db();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(name);
+    const request = transaction.objectStore(name).index(key).openCursor(null, "prev");
+    const records = [];
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      if (!cursor.value.deletedAt && matches(cursor.value)) records.push(cursor.value);
+      if (records.length < limit) cursor.continue();
+    };
+    transaction.oncomplete = () => resolve(records);
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error("Read aborted"));
+  });
+}
+
+function notifyLocalChange() {
+  window.dispatchEvent(new Event("workspace:local-change"));
+}
+
 async function writeLocal(name, record, operation) {
   const database = await db();
   const normalized = normalizeSyncRecord({ ...record, syncStatus: "pending" });
@@ -127,7 +155,10 @@ async function writeLocal(name, record, operation) {
     const transaction = database.transaction([name, "outbox"], "readwrite");
     transaction.objectStore(name).put(normalized);
     transaction.objectStore("outbox").put(outboxEntry(name, normalized, operation));
-    transaction.oncomplete = () => resolve(normalized);
+    transaction.oncomplete = () => {
+      notifyLocalChange();
+      resolve(normalized);
+    };
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error || new Error("Local write aborted"));
   });
@@ -163,7 +194,7 @@ async function updateLocal(name, id, patch) {
         ...patch,
         id: current.id,
         createdAt: current.createdAt,
-        updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        updatedAt: Math.min(8640000000000000, Math.max(Date.now(), current.updatedAt + 1)),
         deviceId: DEVICE_ID,
         version: (Number.isInteger(current.version) && current.version > 0 ? current.version : 1) + 1,
         syncStatus: "pending"
@@ -171,7 +202,10 @@ async function updateLocal(name, id, patch) {
       store.put(next);
       transaction.objectStore("outbox").put(outboxEntry(name, next));
     };
-    transaction.oncomplete = () => resolve(next);
+    transaction.oncomplete = () => {
+      if (next) notifyLocalChange();
+      resolve(next);
+    };
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error || new Error("Local update aborted"));
   });
@@ -219,14 +253,15 @@ function noteRow(note) {
 }
 
 async function renderToday(revision) {
-  const [tasks, notes] = await Promise.all([all("tasks"), all("notes")]);
+  const [openTasks, recentNotes] = await Promise.all([
+    recent("tasks", "createdAt", 4, task => !task.done),
+    recent("notes", "updatedAt", 4)
+  ]);
   if (revision !== renderRevision) return;
   const taskContainer = $("#todayTasks");
   const noteContainer = $("#todayNotes");
   taskContainer.innerHTML = "";
   noteContainer.innerHTML = "";
-  const openTasks = tasks.filter(task => !task.done).sort((a, b) => b.createdAt - a.createdAt).slice(0, 4);
-  const recentNotes = notes.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4);
   taskContainer.className = openTasks.length ? "list" : "";
   noteContainer.className = recentNotes.length ? "list" : "";
   if (!openTasks.length) taskContainer.innerHTML = empty("当前没有待完成任务");
@@ -238,9 +273,9 @@ async function renderToday(revision) {
 async function renderTasks(revision) {
   let tasks = await all("tasks");
   if (revision !== renderRevision) return;
-  tasks.sort((a, b) => Number(a.done) - Number(b.done) || b.createdAt - a.createdAt);
   if (filter === "open") tasks = tasks.filter(task => !task.done);
   if (filter === "done") tasks = tasks.filter(task => task.done);
+  tasks.sort((a, b) => Number(a.done) - Number(b.done) || b.createdAt - a.createdAt);
   const container = $("#tasksList");
   container.innerHTML = "";
   container.className = tasks.length ? "list" : "";
@@ -252,8 +287,8 @@ async function renderNotes(revision) {
   const query = $("#notesSearch").value.trim().toLowerCase();
   let notes = await all("notes");
   if (revision !== renderRevision) return;
-  notes.sort((a, b) => b.updatedAt - a.updatedAt);
   if (query) notes = notes.filter(note => note.text.toLowerCase().includes(query));
+  notes.sort((a, b) => b.updatedAt - a.updatedAt);
   const container = $("#notesList");
   container.innerHTML = "";
   container.className = notes.length ? "list" : "";
@@ -279,47 +314,54 @@ function nav(nextView) {
 }
 
 function openEditor(note = null) {
+  ++editorRevision;
   editing = note?.id || null;
   $("#editorTitle").textContent = note ? "编辑记录" : "新建记录";
   $("#editorText").value = note?.text || "";
+  $("#editorStatus").textContent = "";
   $("#editorDialog").showModal();
   setTimeout(() => $("#editorText").focus(), 50);
 }
 
 async function seed() {
-  const [notes, tasks] = await Promise.all([
-    all("notes", { includeDeleted: true }),
-    all("tasks", { includeDeleted: true })
-  ]);
-  if (notes.length || tasks.length) return;
-  const now = Date.now();
-  await writeLocal("notes", {
-    id: uid(),
-    text: "这是一个本地优先的移动工作台。打开即记录，不要求先整理。",
-    userId: null,
-    deviceId: DEVICE_ID,
-    version: 1,
-    deletedAt: null,
-    syncStatus: "pending",
-    createdAt: now - 3600000,
-    updatedAt: now - 3600000
-  }, "upsert");
-  await writeLocal("tasks", {
-    id: uid(),
-    text: "试着完成一个任务，再新增一条记录",
-    done: false,
-    userId: null,
-    deviceId: DEVICE_ID,
-    version: 1,
-    deletedAt: null,
-    syncStatus: "pending",
-    createdAt: now - 1800000,
-    updatedAt: now - 1800000
-  }, "upsert");
+  // An empty account must stay empty after its examples have been discarded.
+  try {
+    if (localStorage.getItem("today-workspace-bound-user")) return;
+  } catch { /* IndexedDB remains usable when preference storage is unavailable. */ }
+  const database = await db();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(["notes", "tasks", "outbox"], "readwrite");
+    const notes = transaction.objectStore("notes").count();
+    const tasks = transaction.objectStore("tasks").count();
+    let remaining = 2;
+    let seeded = false;
+    const onCount = () => {
+      if (--remaining || notes.result || tasks.result) return;
+      const now = Date.now();
+      for (const [name, fields, age] of [
+        ["notes", { text: "这是一个本地优先的移动工作台。打开即记录，不要求先整理。" }, 3600000],
+        ["tasks", { text: "试着完成一个任务，再新增一条记录", done: false }, 1800000]
+      ]) {
+        const record = normalizeSyncRecord({ id: uid(), ...fields, createdAt: now - age, updatedAt: now - age });
+        transaction.objectStore(name).put(record);
+        transaction.objectStore("outbox").put(outboxEntry(name, record));
+      }
+      seeded = true;
+    };
+    notes.onsuccess = onCount;
+    tasks.onsuccess = onCount;
+    transaction.oncomplete = () => {
+      if (seeded) notifyLocalChange();
+      resolve();
+    };
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error("Initialization aborted"));
+  });
 }
 
 function theme() {
-  const saved = localStorage.getItem("test1-theme");
+  let saved;
+  try { saved = localStorage.getItem("test1-theme"); } catch { /* Use the device theme. */ }
   const dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   $("#themeToggle").checked = dark;
@@ -410,7 +452,10 @@ async function mergeBackup(importedNotes, importedTasks) {
         };
       }
     }
-    transaction.oncomplete = () => resolve(counts);
+    transaction.oncomplete = () => {
+      if (counts.notes || counts.tasks) notifyLocalChange();
+      resolve(counts);
+    };
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error || new Error("Import aborted"));
   });
@@ -439,28 +484,53 @@ async function importBackup(file) {
 
 $$('[data-nav]').forEach(button => { button.onclick = () => nav(button.dataset.nav); });
 
+const pendingForms = new WeakSet();
+
+async function submitOnce(form, status, save) {
+  if (pendingForms.has(form)) return;
+  pendingForms.add(form);
+  const buttons = $$('button:not([value="cancel"])', form);
+  buttons.forEach(button => { button.disabled = true; });
+  status.textContent = "";
+  try {
+    await save();
+  } catch (error) {
+    console.error("Unable to save locally", error);
+    status.textContent = "保存失败，输入内容已保留，请重试。";
+  } finally {
+    pendingForms.delete(form);
+    buttons.forEach(button => { button.disabled = false; });
+  }
+}
+
 $("#captureForm").onsubmit = async event => {
   event.preventDefault();
   const input = $("#captureInput");
-  const raw = input.value.trim();
+  const draft = input.value;
+  const raw = draft.trim();
   if (!raw) return;
   const isTask = /^\/task(\s|$)/i.test(raw);
   const text = isTask ? raw.replace(/^\/task\s*/i, "").trim() : raw;
   if (!text) return;
-  if (isTask) await createLocal("tasks", { text, done: false });
-  else await createLocal("notes", { text });
-  input.value = "";
-  render();
+  await submitOnce($("#captureForm"), $("#captureStatus"), async () => {
+    if (isTask) await createLocal("tasks", { text, done: false });
+    else await createLocal("notes", { text });
+    if (input.value === draft) input.value = "";
+    await render();
+  });
 };
 
 $("#taskForm").onsubmit = async event => {
   event.preventDefault();
   const input = $("#taskInput");
-  const text = input.value.trim();
+  const draft = input.value;
+  const text = draft.trim();
   if (!text) return;
-  await createLocal("tasks", { text, done: false });
-  input.value = "";
-  render();
+  await submitOnce($("#taskForm"), $("#taskStatus"), async () => {
+    await createLocal("tasks", { text, done: false });
+    if (input.value === draft) input.value = "";
+    await render();
+  });
 };
 
 $$(".chip").forEach(chip => {
@@ -483,19 +553,32 @@ $("#settingsButton").onclick = () => $("#settingsDialog").showModal();
 $("#editorForm").onsubmit = async event => {
   if (event.submitter?.value === "cancel") return;
   event.preventDefault();
-  const text = $("#editorText").value.trim();
+  const draft = $("#editorText").value;
+  const text = draft.trim();
   if (!text) return;
-  if (editing) await updateLocal("notes", editing, { text, deletedAt: null });
-  else await createLocal("notes", { text });
-  $("#editorDialog").close();
-  editing = null;
-  render();
+  const revision = editorRevision;
+  const id = editing;
+  await submitOnce($("#editorForm"), $("#editorStatus"), async () => {
+    const saved = id ? await updateLocal("notes", id, { text }) : await createLocal("notes", { text });
+    if (revision === editorRevision && $("#editorDialog").open) {
+      if (!saved) {
+        $("#editorStatus").textContent = "这条记录已被删除，草稿仍保留，可复制后新建记录。";
+        return;
+      }
+      editing = saved.id;
+      if ($("#editorText").value === draft) {
+        $("#editorDialog").close();
+        editing = null;
+      }
+    }
+    await render();
+  });
 };
 
 $("#themeToggle").onchange = event => {
   const nextTheme = event.target.checked ? "dark" : "light";
   document.documentElement.dataset.theme = nextTheme;
-  localStorage.setItem("test1-theme", nextTheme);
+  try { localStorage.setItem("test1-theme", nextTheme); } catch { /* Keep the theme for this session. */ }
 };
 
 $("#exportButton").onclick = exportBackup;
@@ -506,4 +589,11 @@ $("#dateLabel").textContent = new Intl.DateTimeFormat("zh-CN", { weekday: "long"
 
 theme();
 icons();
-seed().then(render);
+window.addEventListener("workspace:remote-change", () => render().catch(console.error));
+const ready = seed().then(render);
+ready.catch(error => {
+  console.error("Unable to initialize local storage", error);
+  $("#captureStatus").textContent = "无法打开本地数据，请检查浏览器存储权限后重试。";
+});
+
+export { db, ready };
