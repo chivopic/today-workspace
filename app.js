@@ -7,6 +7,7 @@ const DEVICE_ID_KEY = "today-workspace-device-id";
 
 let view = "today";
 let filter = "open";
+let captureMode = "note";
 let editing = null;
 let editorRevision = 0;
 
@@ -215,23 +216,83 @@ async function softDelete(name, id) {
   return updateLocal(name, id, { deletedAt: Date.now() });
 }
 
+async function restoreLocal(name, id, expectedVersion) {
+  const database = await db();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([name, "outbox"], "readwrite");
+    const store = transaction.objectStore(name);
+    const request = store.get(id);
+    let restored = null;
+    request.onsuccess = () => {
+      const current = request.result;
+      if (!current?.deletedAt || current.version !== expectedVersion) return;
+      restored = {
+        ...normalizeSyncRecord(current),
+        deletedAt: null,
+        updatedAt: Math.min(8640000000000000, Math.max(Date.now(), current.updatedAt + 1)),
+        deviceId: DEVICE_ID,
+        version: current.version + 1,
+        syncStatus: "pending"
+      };
+      store.put(restored);
+      transaction.objectStore("outbox").put(outboxEntry(name, restored, "upsert"));
+    };
+    transaction.oncomplete = () => {
+      if (restored) notifyLocalChange();
+      resolve(restored);
+    };
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error("Local restore aborted"));
+  });
+}
+
+let undoTimer;
+let undoTarget = null;
+
+function clearUndo() {
+  clearTimeout(undoTimer);
+  undoTarget = null;
+  $("#undoToast").hidden = true;
+}
+
+function offerUndo(name, record) {
+  clearUndo();
+  undoTarget = { name, id: record.id, version: record.version };
+  $("#undoMessage").textContent = name === "tasks" ? "任务已删除" : "记录已删除";
+  $("#undoToast").hidden = false;
+  undoTimer = setTimeout(clearUndo, 6000);
+}
+
 const icons = () => window.lucide?.createIcons({ attrs: { "stroke-width": 1.8 } });
-const dateFormatter = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-const fmt = time => dateFormatter.format(new Date(time));
-const empty = text => `<div class="empty">${text}</div>`;
+const clockFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+const startOfDay = time => new Date(time).setHours(0, 0, 0, 0);
+
+// Short margin stamp: "11:42" today, "昨天" yesterday, "9/27" this year, "25/9/27" before.
+function stamp(time) {
+  const date = new Date(time);
+  const today = startOfDay(Date.now());
+  const day = startOfDay(time);
+  if (day === today) return clockFormatter.format(date);
+  if (day === new Date(today).setDate(new Date(today).getDate() - 1)) return "昨天";
+  const monthDay = `${date.getMonth() + 1}/${date.getDate()}`;
+  return date.getFullYear() === new Date().getFullYear() ? monthDay : `${String(date.getFullYear()).slice(-2)}/${monthDay}`;
+}
+
+const empty = (title, detail) => `<p class="empty">${title}<span>${detail}</span></p>`;
 
 function taskRow(task) {
   const element = document.createElement("div");
   element.className = `row task ${task.done ? "done" : ""}`;
-  element.innerHTML = `<button class="check" aria-label="${task.done ? "标记未完成" : "完成任务"}"><i data-lucide="check"></i></button><div class="main"><p class="title"></p><div class="meta">${fmt(task.createdAt)}</div></div><div class="actions"><button class="icon trash" aria-label="删除任务" title="删除"><i data-lucide="trash-2"></i></button></div>`;
+  element.innerHTML = `<button class="check" aria-label="${task.done ? "标记未完成" : "完成任务"}"><i data-lucide="check"></i></button><div class="main"><p class="title"></p></div><button class="trash" aria-label="删除任务" title="删除任务"><i data-lucide="x"></i></button>`;
   $(".title", element).textContent = task.text;
   $(".check", element).onclick = async () => {
     await updateLocal("tasks", task.id, { done: !task.done });
     render();
   };
   $(".trash", element).onclick = async () => {
-    await softDelete("tasks", task.id);
+    const deleted = await softDelete("tasks", task.id);
     render();
+    if (deleted) offerUndo("tasks", deleted);
   };
   return element;
 }
@@ -239,15 +300,14 @@ function taskRow(task) {
 function noteRow(note) {
   const element = document.createElement("div");
   element.className = "row note";
-  element.innerHTML = `<div class="main"><p class="title"></p><div class="meta">${fmt(note.updatedAt)}</div></div><div class="actions"><button class="icon trash" aria-label="删除记录" title="删除"><i data-lucide="trash-2"></i></button></div>`;
+  element.innerHTML = `<time class="stamp" datetime="${new Date(note.updatedAt).toISOString()}">${stamp(note.updatedAt)}</time><button class="note-open"><span class="title"></span></button><button class="trash" aria-label="删除记录" title="删除记录"><i data-lucide="x"></i></button>`;
   const summary = note.text.replace(/\s+/g, " ").trim();
   $(".title", element).textContent = summary.length > 120 ? `${summary.slice(0, 120)}…` : summary;
-  element.onclick = event => {
-    if (!event.target.closest(".trash")) openEditor(note);
-  };
+  $(".note-open", element).onclick = () => openEditor(note);
   $(".trash", element).onclick = async () => {
-    await softDelete("notes", note.id);
+    const deleted = await softDelete("notes", note.id);
     render();
+    if (deleted) offerUndo("notes", deleted);
   };
   return element;
 }
@@ -264,9 +324,9 @@ async function renderToday(revision) {
   noteContainer.innerHTML = "";
   taskContainer.className = openTasks.length ? "list" : "";
   noteContainer.className = recentNotes.length ? "list" : "";
-  if (!openTasks.length) taskContainer.innerHTML = empty("当前没有待完成任务");
+  if (!openTasks.length) taskContainer.innerHTML = empty("待办都完成了。", "在上面切到“任务”，记下下一件事。");
   else openTasks.forEach(task => taskContainer.append(taskRow(task)));
-  if (!recentNotes.length) noteContainer.innerHTML = empty("还没有记录");
+  if (!recentNotes.length) noteContainer.innerHTML = empty("还没有记录。", "在上面写下第一个想法。");
   else recentNotes.forEach(note => noteContainer.append(noteRow(note)));
 }
 
@@ -279,7 +339,7 @@ async function renderTasks(revision) {
   const container = $("#tasksList");
   container.innerHTML = "";
   container.className = tasks.length ? "list" : "";
-  if (!tasks.length) container.innerHTML = empty(filter === "done" ? "暂无已完成任务" : filter === "open" ? "当前没有待完成任务" : "还没有任务");
+  if (!tasks.length) container.innerHTML = filter === "done" ? empty("还没有完成的任务。", "勾掉一件，它就会出现在这里。") : filter === "open" ? empty("待办已经清空。", "在上面写下下一件事。") : empty("还没有任务。", "在上面添加第一个任务。");
   else tasks.forEach(task => container.append(taskRow(task)));
 }
 
@@ -292,7 +352,7 @@ async function renderNotes(revision) {
   const container = $("#notesList");
   container.innerHTML = "";
   container.className = notes.length ? "list" : "";
-  if (!notes.length) container.innerHTML = empty(query ? "没有匹配的记录" : "还没有记录");
+  if (!notes.length) container.innerHTML = query ? empty("没有找到相关记录。", "换个更短的关键词试试。") : empty("还没有记录。", "点“新建”写下第一个想法。");
   else notes.forEach(note => container.append(noteRow(note)));
 }
 
@@ -308,8 +368,15 @@ async function render() {
 function nav(nextView) {
   view = nextView;
   $$(".view").forEach(element => element.classList.toggle("active", element.dataset.view === nextView));
-  $$(".nav").forEach(element => element.classList.toggle("active", element.dataset.nav === nextView));
+  $$(".nav").forEach(element => {
+    const active = element.dataset.nav === nextView;
+    element.classList.toggle("active", active);
+    if (active) element.setAttribute("aria-current", "page");
+    else element.removeAttribute("aria-current");
+  });
   $("#pageTitle").textContent = { today: "今天", notes: "记录", tasks: "任务" }[nextView];
+  $("#top").dataset.view = nextView;
+  renderDate();
   render();
 }
 
@@ -359,12 +426,45 @@ async function seed() {
   });
 }
 
+function applyTheme(name) {
+  document.documentElement.dataset.theme = name;
+  $('meta[name="theme-color"]')?.setAttribute("content", name === "dark" ? "#15161a" : "#f4f3ef");
+}
+
 function theme() {
   let saved;
   try { saved = localStorage.getItem("test1-theme"); } catch { /* Use the device theme. */ }
   const dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  applyTheme(dark ? "dark" : "light");
   $("#themeToggle").checked = dark;
+}
+
+const CN_MONTHS = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"];
+const weekdayFormatter = new Intl.DateTimeFormat("zh-CN", { weekday: "long" });
+
+function lunarLabel(date) {
+  try {
+    const parts = new Intl.DateTimeFormat("zh-CN-u-ca-chinese", { month: "long", day: "numeric" }).formatToParts(date);
+    const month = parts.find(part => part.type === "month")?.value;
+    const day = Number(parts.find(part => part.type === "day")?.value);
+    if (!month || !(day >= 1 && day <= 30)) return "";
+    const digits = "一二三四五六七八九十";
+    const name = day <= 10 ? `初${digits[day - 1]}` : day < 20 ? `十${digits[day - 11]}` : day === 20 ? "二十" : day < 30 ? `廿${digits[day - 21]}` : "三十";
+    return `农历${month}${name}`;
+  } catch {
+    return "";
+  }
+}
+
+function renderDate() {
+  const now = new Date();
+  const weekday = weekdayFormatter.format(now);
+  $("#dayNumber").textContent = String(now.getDate());
+  if (view === "today") {
+    $("#dateLabel").textContent = [`${CN_MONTHS[now.getMonth()]} ${weekday}`, lunarLabel(now)].filter(Boolean).join(" · ");
+  } else {
+    $("#dateLabel").textContent = `${now.getMonth() + 1}月${now.getDate()}日 ${weekday}`;
+  }
 }
 
 function setBackupStatus(message) {
@@ -484,6 +584,49 @@ async function importBackup(file) {
 
 $$('[data-nav]').forEach(button => { button.onclick = () => nav(button.dataset.nav); });
 
+$("#undoButton").onclick = async () => {
+  const target = undoTarget;
+  if (!target) return;
+  const button = $("#undoButton");
+  button.disabled = true;
+  try {
+    const restored = await restoreLocal(target.name, target.id, target.version);
+    if (undoTarget === target) clearUndo();
+    if (restored) await render();
+  } catch (error) {
+    console.error("Unable to restore locally", error);
+    if (undoTarget === target) {
+      $("#undoMessage").textContent = "恢复失败，请重试";
+      clearTimeout(undoTimer);
+      undoTimer = setTimeout(clearUndo, 6000);
+    }
+  } finally {
+    button.disabled = false;
+  }
+};
+
+function setCaptureMode(mode) {
+  captureMode = mode;
+  $$(".capture-mode").forEach(button => {
+    const active = button.dataset.captureMode === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const input = $("#captureInput");
+  const submit = $("#captureForm button[type='submit']");
+  const label = mode === "task" ? "添加任务" : "添加记录";
+  $("#captureInputLabel").textContent = mode === "task" ? "快速添加任务" : "快速记录";
+  input.placeholder = mode === "task" ? "接下来要完成什么？" : "写下此刻在想的…";
+  submit.setAttribute("aria-label", label);
+  submit.title = label;
+  $("#captureHint").textContent = mode === "task" ? "回车保存为任务" : "回车保存";
+  $("#captureStatus").textContent = "";
+  input.focus();
+}
+
+$$(".capture-mode").forEach(button => { button.onclick = () => setCaptureMode(button.dataset.captureMode); });
+$("#captureInput").oninput = () => { $("#captureStatus").textContent = ""; };
+
 const pendingForms = new WeakSet();
 
 async function submitOnce(form, status, save) {
@@ -509,14 +652,16 @@ $("#captureForm").onsubmit = async event => {
   const draft = input.value;
   const raw = draft.trim();
   if (!raw) return;
-  const isTask = /^\/task(\s|$)/i.test(raw);
-  const text = isTask ? raw.replace(/^\/task\s*/i, "").trim() : raw;
+  const hasTaskCommand = /^\/task(\s|$)/i.test(raw);
+  const isTask = captureMode === "task" || hasTaskCommand;
+  const text = hasTaskCommand ? raw.replace(/^\/task\s*/i, "").trim() : raw;
   if (!text) return;
   await submitOnce($("#captureForm"), $("#captureStatus"), async () => {
     if (isTask) await createLocal("tasks", { text, done: false });
     else await createLocal("notes", { text });
     if (input.value === draft) input.value = "";
     await render();
+    $("#captureStatus").textContent = isTask ? "任务已添加" : "记录已保存";
   });
 };
 
@@ -530,13 +675,18 @@ $("#taskForm").onsubmit = async event => {
     await createLocal("tasks", { text, done: false });
     if (input.value === draft) input.value = "";
     await render();
+    $("#taskStatus").textContent = "任务已添加";
   });
 };
 
 $$(".chip").forEach(chip => {
   chip.onclick = () => {
     filter = chip.dataset.filter;
-    $$(".chip").forEach(element => element.classList.toggle("active", element === chip));
+    $$(".chip").forEach(element => {
+      const active = element === chip;
+      element.classList.toggle("active", active);
+      element.setAttribute("aria-pressed", String(active));
+    });
     render();
   };
 });
@@ -577,7 +727,7 @@ $("#editorForm").onsubmit = async event => {
 
 $("#themeToggle").onchange = event => {
   const nextTheme = event.target.checked ? "dark" : "light";
-  document.documentElement.dataset.theme = nextTheme;
+  applyTheme(nextTheme);
   try { localStorage.setItem("test1-theme", nextTheme); } catch { /* Keep the theme for this session. */ }
 };
 
@@ -585,7 +735,13 @@ $("#exportButton").onclick = exportBackup;
 $("#importButton").onclick = () => $("#importFile").click();
 $("#importFile").onchange = event => importBackup(event.target.files?.[0]);
 
-$("#dateLabel").textContent = new Intl.DateTimeFormat("zh-CN", { weekday: "long", month: "long", day: "numeric" }).format(new Date());
+renderDate();
+// Keep the masthead and margin stamps current when the app is reopened on a later day.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  renderDate();
+  render().catch(console.error);
+});
 
 theme();
 icons();

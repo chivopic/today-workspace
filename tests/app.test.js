@@ -46,6 +46,38 @@ test("capture preserves ordinary /task prefixes and recognizes actual commands",
   assert.ok(tasks.some(task => task.text === "buy milk"));
 });
 
+test("capture mode switch creates the selected type and exposes its state", async t => {
+  const { api, document } = await setup(t);
+  const taskMode = document.querySelector('[data-capture-mode="task"]');
+  taskMode.click();
+  assert.equal(taskMode.getAttribute("aria-pressed"), "true");
+  assert.equal(document.querySelector('[data-capture-mode="note"]').getAttribute("aria-pressed"), "false");
+  assert.equal(document.querySelector("#captureInput").placeholder, "接下来要完成什么？");
+  assert.equal(document.querySelector("#captureInputLabel").textContent, "快速添加任务");
+  const input = document.querySelector("#captureInput");
+  input.value = "用模式切换添加任务";
+  await document.querySelector("#captureForm").onsubmit({ preventDefault() {} });
+  assert.ok((await api.all("tasks")).some(task => task.text === "用模式切换添加任务"));
+  assert.equal(document.querySelector("#captureStatus").textContent, "任务已添加");
+  assert.equal(input.value, "");
+});
+
+test("deleting a record offers undo and restores its pending sync revision", async t => {
+  const { api, document } = await setup(t);
+  const note = await api.createLocal("notes", { text: "误删后恢复" });
+  await api.render();
+  const row = [...document.querySelectorAll("#todayNotes .note")].find(element => element.querySelector(".title").textContent === note.text);
+  await row.querySelector(".trash").onclick();
+  assert.equal(document.querySelector("#undoToast").hidden, false);
+  assert.ok((await api.getOne("notes", note.id)).deletedAt);
+  await document.querySelector("#undoButton").onclick();
+  const restored = await api.getOne("notes", note.id);
+  assert.equal(restored.deletedAt, null);
+  assert.equal(restored.version, note.version + 2);
+  assert.equal((await api.getOne("outbox", `notes:${note.id}`)).operation, "upsert");
+  assert.equal(document.querySelector("#undoToast").hidden, true);
+});
+
 test("concurrent local patches preserve both changes and matching outbox revision", async t => {
   const { api } = await setup(t);
   const task = await api.createLocal("tasks", { text: "before", done: false });
