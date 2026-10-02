@@ -19,7 +19,7 @@ async function setup(t, { indexedDB = new IDBFactory(), beforeEval = () => {} } 
   window.eval(iconSource);
   window.eval(source.replace("export { db, ready };", "window.ready = ready;") + `
     window.api = { db, all, getOne, createLocal, updateLocal, softDelete, mergeBackup,
-      importBackup, render, nav, validNote, recent, seed, openEditor };
+      importBackup, render, nav, validNote, recent, seed, openEditor, stamp, lunarLabel };
   `);
   await window.ready;
   t.after(async () => {
@@ -76,6 +76,18 @@ test("deleting a record offers undo and restores its pending sync revision", asy
   assert.equal(restored.version, note.version + 2);
   assert.equal((await api.getOne("outbox", `notes:${note.id}`)).operation, "upsert");
   assert.equal(document.querySelector("#undoToast").hidden, true);
+});
+
+test("margin stamps shorten by age and the masthead shows the lunar date", async t => {
+  const { api, window } = await setup(t);
+  const now = new window.Date(2026, 8, 28, 14, 8).getTime();
+  window.Date.now = () => now;
+  assert.equal(api.stamp(new window.Date(2026, 8, 28, 9, 5).getTime()), "09:05");
+  assert.equal(api.stamp(new window.Date(2026, 8, 27, 23, 59).getTime()), "昨天");
+  assert.equal(api.stamp(new window.Date(2026, 8, 2, 8, 0).getTime()), "9/2");
+  assert.equal(api.stamp(new window.Date(2025, 11, 31, 8, 0).getTime()), "25/12/31");
+  assert.equal(api.lunarLabel(new window.Date(2026, 8, 28)), "农历八月十八");
+  assert.equal(api.lunarLabel(new window.Date(2026, 1, 17)), "农历正月初一");
 });
 
 test("concurrent local patches preserve both changes and matching outbox revision", async t => {

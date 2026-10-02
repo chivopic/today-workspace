@@ -275,7 +275,7 @@ function stamp(time) {
   if (day === today) return clockFormatter.format(date);
   if (day === new Date(today).setDate(new Date(today).getDate() - 1)) return "昨天";
   const monthDay = `${date.getMonth() + 1}/${date.getDate()}`;
-  return date.getFullYear() === new Date().getFullYear() ? monthDay : `${String(date.getFullYear()).slice(-2)}/${monthDay}`;
+  return date.getFullYear() === new Date(Date.now()).getFullYear() ? monthDay : `${String(date.getFullYear()).slice(-2)}/${monthDay}`;
 }
 
 const empty = (title, detail) => `<p class="empty">${title}<span>${detail}</span></p>`;
@@ -446,8 +446,12 @@ function lunarLabel(date) {
   try {
     const parts = new Intl.DateTimeFormat("zh-CN-u-ca-chinese", { month: "long", day: "numeric" }).formatToParts(date);
     const month = parts.find(part => part.type === "month")?.value;
-    const day = Number(parts.find(part => part.type === "day")?.value);
-    if (!month || !(day >= 1 && day <= 30)) return "";
+    const rawDay = parts.find(part => part.type === "day")?.value;
+    if (!month || !rawDay) return "";
+    const day = Number(rawDay);
+    // Some engines already return the day in Chinese (e.g. "十八"); use it as-is.
+    if (!Number.isInteger(day)) return `农历${month}${rawDay}`;
+    if (day < 1 || day > 30) return "";
     const digits = "一二三四五六七八九十";
     const name = day <= 10 ? `初${digits[day - 1]}` : day < 20 ? `十${digits[day - 11]}` : day === 20 ? "二十" : day < 30 ? `廿${digits[day - 21]}` : "三十";
     return `农历${month}${name}`;
