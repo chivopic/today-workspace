@@ -16,8 +16,8 @@ export default defineConfig({
         start_url: "./",
         scope: "./",
         display: "standalone",
-        background_color: "#f7f7f5",
-        theme_color: "#f7f7f5",
+        background_color: "#f4f3ef",
+        theme_color: "#f4f3ef",
         lang: "zh-CN",
         categories: ["productivity", "utilities"],
         prefer_related_applications: false,
@@ -43,7 +43,7 @@ export default defineConfig({
         ]
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,png}"],
+        globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
         cleanupOutdatedCaches: true,
         navigateFallback: "index.html"
       }

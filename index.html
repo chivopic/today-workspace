@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#f7f7f5" />
+  <meta name="theme-color" content="#f4f3ef" />
   <meta name="description" content="一个克制、本地优先的移动端记录与任务工作台" />
   <link rel="icon" href="/icon.svg" />
   <link rel="apple-touch-icon" href="/icon-192.png" />
@@ -11,10 +11,13 @@
 </head>
 <body>
   <div class="app">
-    <header class="top">
-      <div>
-        <p class="eyebrow" id="dateLabel">Today</p>
-        <h1 id="pageTitle">今天</h1>
+    <header class="top" id="top" data-view="today">
+      <div class="masthead">
+        <span class="day-num" id="dayNumber" aria-hidden="true"></span>
+        <div class="masthead-text">
+          <h1 id="pageTitle">今天</h1>
+          <p class="date-label" id="dateLabel"></p>
+        </div>
       </div>
       <button class="icon" id="settingsButton" aria-label="设置" title="设置">
         <i data-lucide="settings-2"></i>
@@ -23,16 +26,24 @@
 
     <main class="content">
       <section class="view active" data-view="today">
-        <form class="capture" id="captureForm">
-          <label class="sr-only" for="captureInput">快速记录</label>
-          <input id="captureInput" maxlength="180" autocomplete="off" placeholder="记录想法，或输入 /task 添加任务" />
-          <button class="icon submit" type="submit" aria-label="添加" title="添加"><i data-lucide="arrow-up"></i></button>
-        </form>
-        <p class="save-status" id="captureStatus" role="status"></p>
-        <p class="hint">默认保存为记录；以 <code>/task</code> 开头则保存为任务。</p>
+        <section class="capture-area" aria-label="快速记录">
+          <form class="capture" id="captureForm">
+            <label class="sr-only" for="captureInput" id="captureInputLabel">快速记录</label>
+            <input id="captureInput" maxlength="180" autocomplete="off" enterkeyhint="done" placeholder="写下此刻在想的…" />
+            <button class="capture-submit" type="submit" aria-label="添加记录" title="添加记录"><i data-lucide="arrow-up"></i></button>
+          </form>
+          <div class="capture-foot">
+            <div class="capture-modes" role="group" aria-label="新增内容类型">
+              <button type="button" class="capture-mode active" data-capture-mode="note" aria-pressed="true">记录</button>
+              <button type="button" class="capture-mode" data-capture-mode="task" aria-pressed="false">任务</button>
+            </div>
+            <p class="capture-hint" id="captureHint">回车保存</p>
+          </div>
+          <p class="save-status" id="captureStatus" role="status" aria-live="polite"></p>
+        </section>
 
         <section class="section">
-          <div class="section-head"><h2>接下来</h2><button class="quiet" data-nav="tasks">全部任务</button></div>
+          <div class="section-head"><h2>待办</h2><button class="quiet" data-nav="tasks">全部任务</button></div>
           <div id="todayTasks"></div>
         </section>
 
@@ -43,31 +54,40 @@
       </section>
 
       <section class="view" data-view="notes">
-        <div class="search"><i data-lucide="search"></i><input id="notesSearch" type="search" placeholder="搜索记录" /></div>
-        <div class="section-head" style="margin-top:18px"><h2>记录</h2><button class="quiet" id="newNoteButton">新建</button></div>
+        <div class="toolbar">
+          <div class="search"><i data-lucide="search"></i><label class="sr-only" for="notesSearch">搜索记录</label><input id="notesSearch" type="search" placeholder="搜索记录" /></div>
+          <button class="quiet" id="newNoteButton"><i data-lucide="plus"></i>新建</button>
+        </div>
         <div id="notesList"></div>
       </section>
 
       <section class="view" data-view="tasks">
-        <div class="filters">
-          <button class="chip active" data-filter="open">待完成</button>
-          <button class="chip" data-filter="all">全部</button>
-          <button class="chip" data-filter="done">已完成</button>
-        </div>
         <form class="inline-create" id="taskForm">
-          <input id="taskInput" maxlength="120" placeholder="添加任务" />
-          <button class="icon" type="submit" aria-label="添加任务" title="添加任务"><i data-lucide="plus"></i></button>
+          <label class="sr-only" for="taskInput">添加任务</label>
+          <input id="taskInput" maxlength="120" autocomplete="off" enterkeyhint="done" placeholder="接下来要完成什么？" />
+          <button class="capture-submit task-submit" type="submit" aria-label="添加任务" title="添加任务"><i data-lucide="plus"></i></button>
         </form>
         <p class="save-status" id="taskStatus" role="status"></p>
+        <div class="filters" role="group" aria-label="任务筛选">
+          <button class="chip active" data-filter="open" aria-pressed="true">待完成</button>
+          <button class="chip" data-filter="all" aria-pressed="false">全部</button>
+          <button class="chip" data-filter="done" aria-pressed="false">已完成</button>
+        </div>
         <div id="tasksList"></div>
       </section>
     </main>
 
     <nav class="bottom" aria-label="主导航">
-      <button class="nav active" data-nav="today"><i data-lucide="sun"></i><span>今天</span></button>
-      <button class="nav" data-nav="notes"><i data-lucide="notebook-text"></i><span>记录</span></button>
-      <button class="nav" data-nav="tasks"><i data-lucide="circle-check-big"></i><span>任务</span></button>
+      <div class="desktop-brand" aria-hidden="true">today<span class="brand-dot">.</span></div>
+      <button class="nav active" data-nav="today" aria-current="page">今天</button>
+      <button class="nav" data-nav="notes">记录</button>
+      <button class="nav" data-nav="tasks">任务</button>
     </nav>
+  </div>
+
+  <div class="undo-toast" id="undoToast" role="status" aria-live="polite" hidden>
+    <span id="undoMessage"></span>
+    <button type="button" id="undoButton">撤销</button>
   </div>
 
   <dialog class="sheet" id="editorDialog">
