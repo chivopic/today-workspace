@@ -104,8 +104,8 @@ PWA 在生产构建成功联网加载后缓存应用。离线重新打开依赖�
 
 ## 贡献与许可证
 
-报告问题时，请提供浏览器或 Android 版本、复现步骤，并说明问题发生在本地操作还是同步阶段。修改代码后运行 `npm test` 和 `npm run build`；检查覆盖范围见[开发文档](./docs/development.md)。请勿在报告中包含私人记录、凭据或签名文件。
+欢迎提交问题、针对性修复、无障碍改进和文档贡献。[CONTRIBUTING.md](./CONTRIBUTING.md) 说明了环境准备、验证要求、数据安全注意事项和 PR 流程。Issue 和 PR 均可使用中文或英文。
 
-仓库目前**没有 LICENSE 文件或独立的贡献政策文档**，此处未声明开源许可证。
+本项目采用 [MIT 许可证](./LICENSE)，第三方组件保留各自的许可条款。
 
 项目最初在 [chivopic/my-software](https://github.com/chivopic/my-software) 中开发，于 2026-09-06 独立为当前仓库。此前的提交历史仍保留在原仓库。

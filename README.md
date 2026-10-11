@@ -104,8 +104,8 @@ The PWA caches the app after a successful online load of the production build. O
 
 ## Contributing and license
 
-For a bug report, include the browser or Android version, steps to reproduce, and whether the issue occurs locally or during sync. Run `npm test` and `npm run build` when changing code; the [development guide](./docs/development.md) explains what those checks cover. Do not include private notes, credentials, or signing files in reports.
+Bug reports, focused fixes, accessibility improvements, and documentation contributions are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, test expectations, data-safety guidelines, and the pull request workflow. Issues and PRs may be written in English or Chinese.
 
-This repository does **not** currently include a LICENSE file or a separate contribution policy. No open-source license is declared here.
+Licensed under the [MIT License](./LICENSE). Third-party components retain their own license terms.
 
 Originally developed in [chivopic/my-software](https://github.com/chivopic/my-software), Today Workspace became a separate repository on 2026-09-06. Earlier commit history remains in that repository.
